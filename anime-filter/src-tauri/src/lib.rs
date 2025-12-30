@@ -34,12 +34,12 @@ pub fn run() {
             // 初始化数据库
             let db = Database::new(&db_path).expect("Failed to initialize database");
 
-            // CSV 文件路径 - 使用绝对路径
-            let csv_path = PathBuf::from("/Users/zcan/Documents/sthtry/anime_csv/full_data.csv");
+            // CSV 文件路径 - 使用资源路径
+            let resource_path = app.path().resolve("resources/full_data.csv", tauri::path::BaseDirectory::Resource)
+                .expect("Failed to resolve resource path");
 
-            // 加载番剧数据
-            println!("Loading anime data from CSV...");
-            let anime_data = load_anime_from_csv(&csv_path)
+            println!("Loading anime data from CSV at: {:?}", resource_path);
+            let anime_data = load_anime_from_csv(&resource_path)
                 .expect("Failed to load anime data from CSV");
             println!("Successfully loaded {} anime records", anime_data.len());
 

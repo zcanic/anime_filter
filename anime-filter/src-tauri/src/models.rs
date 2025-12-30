@@ -1,4 +1,16 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Deserializer};
+
+fn bool_from_python_string<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    match s.as_str() {
+        "True" | "true" | "TRUE" => Ok(true),
+        "False" | "false" | "FALSE" => Ok(false),
+        _ => Err(serde::de::Error::custom(format!("Expected True/False, got {}", s))),
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Anime {
@@ -23,7 +35,10 @@ pub struct Anime {
     pub rating_count: Option<f64>,
     #[serde(rename = "平均分")]
     pub avg_rating: Option<f64>,
+
+    #[serde(deserialize_with = "bool_from_python_string")]
     pub has_supp: bool,
+
     pub infobox_raw: Option<String>,
     pub tags: Option<String>,
     pub character_count: Option<f64>,
