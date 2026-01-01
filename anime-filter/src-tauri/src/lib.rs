@@ -6,7 +6,7 @@ mod csv_parser;
 mod database;
 mod models;
 
-use commands::{AppState, batch_mark_anime, get_all_anime, get_all_user_status, get_stats, get_user_status, mark_anime};
+use commands::{AppState, batch_mark_anime, get_all_anime, get_all_user_status, get_stats, get_user_status, mark_anime, save_user_log_csv, load_user_log_csv, delete_user_log, clear_all_user_logs};
 use csv_parser::load_anime_from_csv;
 use database::Database;
 use std::path::PathBuf;
@@ -31,6 +31,10 @@ pub fn run() {
             let db_path = app_data_dir.join("anime_filter.db");
             println!("Database path: {:?}", db_path);
 
+            // User Action log path
+            let csv_log_path = app_data_dir.join("user_actions.csv");
+            println!("User Actions CSV path: {:?}", csv_log_path);
+
             // 初始化数据库
             let db = Database::new(&db_path).expect("Failed to initialize database");
 
@@ -47,6 +51,8 @@ pub fn run() {
             let state = AppState {
                 anime_data: Mutex::new(anime_data),
                 db: Mutex::new(db),
+                csv_log_path,
+                csv_lock: Mutex::new(()),
             };
 
             app.manage(state);
@@ -59,7 +65,11 @@ pub fn run() {
             batch_mark_anime,
             get_user_status,
             get_all_user_status,
-            get_stats
+            get_stats,
+            save_user_log_csv,
+            load_user_log_csv,
+            delete_user_log,
+            clear_all_user_logs
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

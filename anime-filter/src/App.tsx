@@ -1,193 +1,202 @@
-import { useEffect, useState, useMemo } from 'react';
-import { getAllAnime, getAllUserStatus, markAnime } from './utils/tauriApi';
-import { useAnimeStore } from './store/animeStore';
-import CardGrid from './components/CardGrid';
-import FilterPanel from './components/FilterPanel';
-import { Anime, AnimeStatus } from './types/anime';
-import { Search, SlidersHorizontal, LayoutGrid, RotateCw } from 'lucide-react';
+import { useEffect, useState, useMemo } from "react";
+import { AnimeGrid, AnimeData } from "./interface-template/components/anime-grid";
+import Papa from "papaparse";
+import { loadUserLogs, saveUserLogs, deleteUserLog, clearAllUserLogs, SimpleUserAction } from "./lib/api";
 
 function App() {
-  const {
-    allAnime,
-    setAllAnime,
-    userDataMap,
-    markAnime: markStore,
-    viewMode,
-    setViewMode,
-    filterOptions,
-    setFilterOptions
-  } = useAnimeStore();
+  const [data, setData] = useState<AnimeData[]>([]);
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+  
+  // Full log history - Single Source of Truth
+  const [userLogs, setUserLogs] = useState<SimpleUserAction[]>([]);
 
-  const [isLoading, setIsLoading] = useState(true);
-
-  // 初始化加载数据
-  useEffect(() => {
-    async function initData() {
-      try {
-        setIsLoading(true);
-        const [animeList, userStatusList] = await Promise.all([
-          getAllAnime(),
-          getAllUserStatus()
-        ]);
-
-        // 初始化 Store
-        setAllAnime(animeList);
-
-        // 同步后端状态到 Store
-        if (userStatusList && userStatusList.length > 0) {
-           // 这里我们简单起见，假设 Store 已经有逻辑处理这个初始化
-           // 实际上可能需要扩展 store 来支持批量 setUserDataMap
-           // 暂时先跳过这步，因为 store 的 persist 中间件可能会处理
-        }
-      } catch (error) {
-        console.error("Failed to load data:", error);
-      } finally {
-        setIsLoading(false);
-      }
-    }
-
-    initData();
-  }, [setAllAnime]);
-
-  // 处理过滤逻辑
-  const filteredAnime = useMemo(() => {
-    return allAnime.filter(anime => {
-      // 1. 搜索过滤
-      if (filterOptions.searchQuery) {
-        const query = filterOptions.searchQuery.toLowerCase();
-        const matchTitle = anime.title.toLowerCase().includes(query);
-        const matchTags = anime.tags?.toLowerCase().includes(query);
-        if (!matchTitle && !matchTags) return false;
-      }
-
-      // 2. 状态过滤
-      if (filterOptions.status !== 'all') {
-        const currentStatus = userDataMap.get(anime.subject_id)?.status || 'unmarked';
-        if (filterOptions.status === 'unmarked') {
-            if (currentStatus !== 'unmarked') return false;
-        } else if (currentStatus !== filterOptions.status) {
-            return false;
-        }
-      }
-
-      // 3. 年份过滤
-      if (anime.year < filterOptions.yearRange[0] || anime.year > filterOptions.yearRange[1]) {
-        return false;
-      }
-
-      // 4. 评分过滤
-      const score = anime.平均分 || 0;
-      if (score < filterOptions.ratingRange[0] || score > filterOptions.ratingRange[1]) {
-        return false;
-      }
-
-      return true;
+  // Derived state (Memoized)
+  // We process logs in order. Later logs overwrite earlier logs for the same ID.
+  const { watchedIds, interestedIds, skippedIds } = useMemo(() => {
+    const statusMap = new Map<number, string>();
+    
+    userLogs.forEach(log => {
+      statusMap.set(Number(log.subject_id), log.status);
     });
-  }, [allAnime, filterOptions, userDataMap]);
 
-  // 处理标记
-  const handleMark = async (id: number, status: AnimeStatus) => {
-    // 乐观更新 Store
-    markStore(id, status);
-    // 异步更新后端
-    await markAnime(id, status);
+    const watched: number[] = [];
+    const interested: number[] = [];
+    const skipped: number[] = [];
+
+    statusMap.forEach((status, id) => {
+      if (status === "watched") watched.push(id);
+      else if (status === "interested") interested.push(id);
+      else if (status === "skipped") skipped.push(id);
+    });
+
+    return { 
+      watchedIds: watched, 
+      interestedIds: interested, 
+      skippedIds: skipped 
+    };
+  }, [userLogs]);
+
+  // Derived Set for O(1) lookups - crucial for performance and sync
+  const reviewedSet = useMemo(() => {
+    return new Set([...watchedIds, ...interestedIds, ...skippedIds]);
+  }, [watchedIds, interestedIds, skippedIds]);
+
+  // 1. Fetch Anime Data
+  useEffect(() => {
+    fetch("/full_data.csv")
+      .then((response) => response.text())
+      .then((csvText) => {
+        Papa.parse(csvText, {
+          header: true,
+          dynamicTyping: true, 
+          skipEmptyLines: true,
+          complete: (results) => {
+            const parsedData = results.data.map((row: any) => {
+              let episodes = 1;
+              if (row.infobox_raw) {
+                const match = row.infobox_raw.match(/话数:\s*(\d+)/);
+                if (match) {
+                  episodes = parseInt(match[1], 10);
+                }
+              }
+
+              return {
+                id: row.subject_id,
+                title: String(row.title),
+                japaneseTitle: String(row.supp_title || row.title),
+                score: row.平均分,
+                image: row.img_url,
+                synopsis: "No synopsis available",
+                episodes: episodes,
+                year: row.year,
+                // KEEP RAW STRING for fuzzy search (user requirement)
+                tags: row.tags ? String(row.tags) : "",
+              };
+            }).filter((a: any) => a.id && a.title);
+
+            setData(parsedData as AnimeData[]);
+          },
+          error: (error: any) => {
+            console.error("Error parsing CSV:", error);
+          }
+        });
+      })
+      .catch(err => {
+        console.error("Error fetching CSV:", err);
+      });
+  }, []);
+
+  // 2. Fetch User Logs
+  useEffect(() => {
+    const initUserLogs = async () => {
+      const logs = await loadUserLogs();
+      // Map UserAnimeData to SimpleUserAction for consistency
+      const simpleLogs: SimpleUserAction[] = logs.map(l => ({
+        subject_id: l.subject_id,
+        status: l.status,
+        timestamp: l.marked_at
+      }));
+      
+      setUserLogs(simpleLogs);
+      setLoading(false);
+    };
+
+    initUserLogs();
+  }, []);
+
+  const handleAction = (ids: number[], status: string) => {
+    const timestamp = new Date().toISOString();
+    const newActions: SimpleUserAction[] = ids.map(id => ({
+      subject_id: id,
+      status,
+      timestamp
+    }));
+
+    // 1. Optimistic Update - Functional Update to prevent race conditions
+    setUserLogs(prev => [...prev, ...newActions]);
+
+    // 2. Save to Backend
+    saveUserLogs(newActions);
   };
 
-  // 生成状态 Map 和 评分 Map 供 Grid 使用
-  const userStatusMap = useMemo(() => {
-    const map = new Map<number, AnimeStatus>();
-    userDataMap.forEach((v, k) => map.set(k, v.status));
-    return map;
-  }, [userDataMap]);
-
-  const userRatingMap = useMemo(() => {
-    const map = new Map<number, number>();
-    userDataMap.forEach((v, k) => {
-        if (v.rating) map.set(k, v.rating);
-    });
-    return map;
-  }, [userDataMap]);
-
-
-  if (isLoading) {
+  if (loading || data.length === 0) {
     return (
-      <div className="h-screen w-screen flex items-center justify-center bg-gray-900 text-white">
-        <div className="flex flex-col items-center gap-4">
-          <RotateCw className="animate-spin text-blue-500" size={48} />
-          <p className="text-xl font-light">正在加载 14,000+ 部番剧...</p>
+      <div className="flex items-center justify-center min-h-screen bg-[#F7F9F8] text-[#2C3639]">
+        <div className="flex flex-col items-center gap-2">
+            <span className="text-xl font-medium">Loading anime data...</span>
+            <span className="text-sm text-gray-500">Parsing logs and records</span>
         </div>
       </div>
     );
   }
 
+  const handleUndoAction = (id: number) => {
+    // 1. Optimistic Update: Remove the LAST instance of this ID from logs
+    setUserLogs(prev => {
+      // Find the last index of this ID
+      let foundIndex = -1;
+      for (let i = prev.length - 1; i >= 0; i--) {
+        if (prev[i].subject_id === id) {
+          foundIndex = i;
+          break;
+        }
+      }
+
+      if (foundIndex !== -1) {
+        const newLogs = [...prev];
+        newLogs.splice(foundIndex, 1);
+        return newLogs;
+      }
+      return prev;
+    });
+      
+    // 2. Update Backend
+    deleteUserLog(id);
+  };
+
+  const handleResetAll = () => {
+    // 1. Optimistic Update
+    setUserLogs([]);
+    
+    // 2. Update Backend
+    clearAllUserLogs();
+  };
+
   return (
-    <div className="h-screen w-screen flex flex-col bg-gray-950 text-gray-100 overflow-hidden">
-      {/* 顶部栏 */}
-      <header className="h-16 border-b border-gray-800 flex items-center px-6 gap-6 shrink-0 bg-gray-900/50 backdrop-blur">
-        <div className="font-bold text-xl tracking-tight bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
-          Anime Filter
-        </div>
+    <AnimeGrid
+      data={data}
+      watchedIds={watchedIds}
+      interestedIds={interestedIds}
+      skippedIds={skippedIds}
+      reviewedSet={reviewedSet} // Pass the Set directly for fuzzy Logic
+      page={page}
+      onPrevious={() => setPage(p => Math.max(1, p - 1))}
+      
+      onSubmit={(selectedIds) => {
+        handleAction(selectedIds, "watched");
+        setPage(p => p + 1);
+      }}
+      
+      onSkip={() => {
+        setPage(p => p + 1);
+      }}
+      
+      onMarkInterested={(id) => {
+         handleAction([id], "interested");
+      }}
 
-        {/* 搜索框 */}
-        <div className="flex-1 max-w-xl relative group">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 group-focus-within:text-blue-400 transition-colors" size={18} />
-          <input
-            type="text"
-            placeholder="搜索番剧、标签..."
-            className="w-full bg-gray-900 border border-gray-700 rounded-full py-2 pl-10 pr-4 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
-            value={filterOptions.searchQuery || ''}
-            onChange={(e) => setFilterOptions({ searchQuery: e.target.value })}
-          />
-        </div>
+      onMarkWatched={(id) => {
+        handleAction([id], "watched");
+      }}
+      
+      onIgnore={(ids) => {
+        handleAction(ids, "skipped");
+      }}
 
-        {/* 视图切换 */}
-        <div className="flex items-center gap-2 bg-gray-800 rounded-lg p-1 border border-gray-700">
-          {(['small', 'medium', 'large'] as const).map((mode) => (
-            <button
-              key={mode}
-              onClick={() => setViewMode(mode)}
-              className={`p-1.5 rounded-md transition-all ${
-                viewMode === mode ? 'bg-gray-700 text-white shadow-sm' : 'text-gray-400 hover:text-gray-200'
-              }`}
-              title={mode}
-            >
-              <LayoutGrid size={16} />
-            </button>
-          ))}
-        </div>
-
-        {/* 统计信息 */}
-        <div className="text-sm text-gray-400">
-          已筛选: <span className="text-white font-medium">{filteredAnime.length}</span> / {allAnime.length}
-        </div>
-      </header>
-
-      {/* 主体区域 */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* 左侧：过滤器 */}
-        <aside className="w-64 border-r border-gray-800 p-4 bg-gray-900/30">
-           <FilterPanel />
-        </aside>
-
-        {/* 右侧：网格 */}
-        <main className="flex-1 p-4 relative">
-          <CardGrid
-            animeList={filteredAnime}
-            viewMode={viewMode}
-            userStatusMap={userStatusMap}
-            userRatingMap={userRatingMap}
-            onMark={handleMark}
-            onOpenDetail={(anime) => console.log('Open detail', anime)}
-          />
-        </main>
-      </div>
-
-      {/* 底部状态栏 */}
-      <footer className="h-8 border-t border-gray-800 bg-gray-900 px-4 flex items-center justify-between text-xs text-gray-500">
-        <div>快捷键: J (已看) / K (跳过) / L (想看)</div>
-        <div>v0.1.0</div>
-      </footer>
-    </div>
+      onUndoAction={handleUndoAction}
+      onResetAll={handleResetAll}
+    />
   );
 }
 
