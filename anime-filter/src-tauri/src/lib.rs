@@ -1,16 +1,24 @@
-// Prevents additional console window on Windows in release, DO NOT REMOVE!!
+//! AnimePick - Tauri Library Entry Point (for mobile)
+//!
+//! Architecture: Rust Gateway + Python Sidecar
+//! - Rust: Window management, Python lifecycle, HTTP forwarding
+//! - Python: ALL business logic (database, AI, filtering)
+
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
-mod csv_parser;
-mod database;
-mod models;
+mod sidecar;
+mod state;
 
-use commands::{AppState, batch_mark_anime, get_all_anime, get_all_user_status, get_stats, get_user_status, mark_anime, save_user_log_csv, load_user_log_csv, delete_user_log, clear_all_user_logs};
-use csv_parser::load_anime_from_csv;
-use database::Database;
-use std::path::PathBuf;
-use std::sync::Mutex;
+use crate::sidecar::SidecarManager;
+use crate::state::AppState;
+use commands::{
+    forward_clear_all_logs, forward_delete_user_log, forward_get_anime_list,
+    forward_get_recommendations, forward_get_stats, forward_health_check,
+    forward_load_user_logs, forward_mark_anime, forward_save_user_logs,
+    get_backend_port,
+};
+use std::sync::Arc;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -18,59 +26,68 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            // 获取应用数据目录
             let app_data_dir = app
                 .path()
                 .app_data_dir()
-                .expect("Failed to get app data directory");
+                .map_err(|e| {
+                    eprintln!("[Tauri] Failed to get app data directory: {}", e);
+                    e
+                })?;
 
-            // 确保目录存在
-            std::fs::create_dir_all(&app_data_dir).expect("Failed to create app data directory");
+            std::fs::create_dir_all(&app_data_dir).map_err(|e| {
+                eprintln!("[Tauri] Failed to create app data directory: {}", e);
+                e
+            })?;
 
-            // 数据库路径
-            let db_path = app_data_dir.join("anime_filter.db");
-            println!("Database path: {:?}", db_path);
+            println!("[Tauri] App data dir: {:?}", app_data_dir);
 
-            // User Action log path
-            let csv_log_path = app_data_dir.join("user_actions.csv");
-            println!("User Actions CSV path: {:?}", csv_log_path);
+            let app_state = Arc::new(AppState::new(app_data_dir.clone()).map_err(|e| {
+                eprintln!("[Tauri] Failed to create app state: {}", e);
+                e
+            })?);
+            app.manage(app_state.clone());
 
-            // 初始化数据库
-            let db = Database::new(&db_path).expect("Failed to initialize database");
+            std::env::set_var("ANIMEPICK_APP_DATA_DIR", &app_data_dir);
 
-            // CSV 文件路径 - 使用资源路径
-            let resource_path = app.path().resolve("resources/full_data.csv", tauri::path::BaseDirectory::Resource)
-                .expect("Failed to resolve resource path");
+            let state_clone = app_state.clone();
+            let app_handle = app.handle().clone();
 
-            println!("Loading anime data from CSV at: {:?}", resource_path);
-            let anime_data = load_anime_from_csv(&resource_path)
-                .expect("Failed to load anime data from CSV");
-            println!("Successfully loaded {} anime records", anime_data.len());
-
-            // 创建应用状态
-            let state = AppState {
-                anime_data: Mutex::new(anime_data),
-                db: Mutex::new(db),
-                csv_log_path,
-                csv_lock: Mutex::new(()),
-            };
-
-            app.manage(state);
+            tauri::async_runtime::spawn(async move {
+                match SidecarManager::spawn_python_backend(&app_handle).await {
+                    Ok(port) => {
+                        state_clone.set_backend_port(port);
+                        match state_clone.health_check().await {
+                            Ok(_) => println!("[Tauri] ✓ Backend connected"),
+                            Err(e) => eprintln!("[Tauri] ✗ Health check failed: {}", e),
+                        }
+                    }
+                    Err(e) => eprintln!("[Tauri] ✗ Failed to start backend: {}", e),
+                }
+            });
 
             Ok(())
         })
+        .on_window_event(|_window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                println!("[Tauri] Shutting down...");
+                SidecarManager::kill_python_backend();
+            }
+        })
         .invoke_handler(tauri::generate_handler![
-            get_all_anime,
-            mark_anime,
-            batch_mark_anime,
-            get_user_status,
-            get_all_user_status,
-            get_stats,
-            save_user_log_csv,
-            load_user_log_csv,
-            delete_user_log,
-            clear_all_user_logs
+            get_backend_port,
+            forward_health_check,
+            forward_get_anime_list,
+            forward_mark_anime,
+            forward_save_user_logs,
+            forward_load_user_logs,
+            forward_delete_user_log,
+            forward_clear_all_logs,
+            forward_get_stats,
+            forward_get_recommendations,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .unwrap_or_else(|e| {
+            eprintln!("[Tauri] Failed to run Tauri application: {}", e);
+            std::process::exit(1);
+        });
 }

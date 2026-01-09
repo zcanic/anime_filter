@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
-import { AnimeGrid, AnimeData } from "./interface-template/components/anime-grid";
+import { AnimeGrid, AnimeData } from "./components/anime-grid";
 import Papa from "papaparse";
 import { loadUserLogs, saveUserLogs, deleteUserLog, clearAllUserLogs, SimpleUserAction } from "./lib/api";
 

@@ -9,7 +9,7 @@ export default defineConfig(async () => ({
   plugins: [react()],
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src/interface-template"),
+      "@": path.resolve(__dirname, "./src"),
     },
   },
 
