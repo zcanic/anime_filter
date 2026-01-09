@@ -1,6 +1,6 @@
 # AnimePick - AI 原生动漫筛选应用
 
-一款基于 **Tauri 2 + React + Python** 构建的桌面动漫筛选应用。通过直观的滑动手势和丰富的筛选功能，帮助用户高效地管理和标记自己的动漫观看记录。支持本地 AI 推荐（Apple Silicon 优化）。
+一款基于 **Tauri 2 + React + Python** 构建的桌面动漫筛选应用。通过直观的滑动手势和丰富的筛选功能，帮助用户高效地管理和标记自己的动漫观看记录。支持**基于TF-IDF的个性化推荐系统**。
 
 ---
 
@@ -12,11 +12,11 @@
 | ✅ **批量选择** | 点击卡片多选，一键确认 |
 | 🏷️ **标签筛选** | 按标签筛选动漫（如"日本"、"搞笑"等） |
 | 🔍 **高级筛选** | 按评分、年份、观看状态进行筛选 |
-| 💾 **数据持久化** | 所有操作自动保存到本地 CSV 文件 |
+| 🎯 **智能推荐** | 基于观看历史的个性化推荐（TF-IDF + 滞后响应） |
+| 💾 **数据持久化** | 所有操作自动保存到 SQLite 数据库 |
 | ↩️ **撤销功能** | 支持撤销最近的操作 |
 | 👀 **视图切换** | 在"全部"和"已看"视图间切换 |
 | 📐 **布局调整** | 支持小/中/大三种卡片布局 |
-| 🤖 **AI 推荐** | 基于本地模型的智能推荐（开发中） |
 
 ### 用户状态类型
 
@@ -26,19 +26,55 @@
 
 ---
 
+## 🎯 推荐系统特性 (NEW!)
+
+AnimePick 配备了先进的推荐引擎，提供个性化的动漫推荐体验：
+
+### 核心特性
+
+- **滞后响应机制**: 第k+1次推荐基于k-2, k-1, ..., 1的选择，避免推荐茧房
+- **双重考虑**: 同时考虑全局平均特征（40%）和局部相似向量（40%）
+- **多样性保障**: 多样性奖励机制（20%），防止推荐过于单一
+- **高温度调节**: Temperature=2.0，平滑分数分布，增加探索性
+- **Session持久化**: 跨会话保持推荐历史
+
+### 性能指标
+
+- **响应时间**: 平均66ms（包含HTTP往返）
+- **推荐质量**: 基于14,256部动漫的TF-IDF向量
+- **存储开销**: ~1.4MB内存占用
+- **最小历史**: 观看至少2部动漫即可获得推荐
+
+### 技术实现
+
+```
+TF-IDF向量化 (1000维)
+    ↓
+三组件融合算法
+    ├─ 全局相似度 (40%)
+    ├─ 局部最大相似 (40%)
+    └─ 多样性奖励 (20%)
+    ↓
+Temperature调节 (T=2.0)
+    ↓
+个性化推荐结果
+```
+
+---
+
 ## 🏗️ 技术架构
 
 ```
 ┌─────────────────┐      IPC       ┌─────────────────┐      HTTP       ┌─────────────────┐
-│   React 前端    │ ◄────────────► │  Rust 网关层    │ ◄─────────────► │ Python Sidecar  │
-│   (Vite)        │                │  (Tauri 2)      │                 │  (FastAPI)      │
+│   React 前端    │ ◄────────────► │  Rust 网关层    │ ◄─────────────► │ Python FastAPI  │
+│   (Vite)        │                │  (Tauri 2)      │                 │   Backend       │
 └─────────────────┘                └─────────────────┘                 └─────────────────┘
                                           │                                    │
                                           │                                    ▼
                                           │                            ┌─────────────────┐
-                                          │                            │   AI 推理引擎    │
-                                          │                            │   数据爬虫       │
-                                          └────► 窗口 / 托盘管理         │   SQLite/CSV    │
+                                          │                            │ 推荐引擎 (TF-IDF)│
+                                          │                            │ 数据持久化       │
+                                          └────► 窗口 / 托盘管理         │ SQLite 数据库    │
                                                                         └─────────────────┘
 ```
 
@@ -48,7 +84,7 @@
 |------|------|------|
 | **前端** | React 19 + TypeScript + TailwindCSS | UI 渲染、用户交互 |
 | **网关** | Rust + Tauri 2 | 窗口管理、进程管理、HTTP 转发 |
-| **业务** | Python + FastAPI | AI 推理、爬虫、数据持久化 |
+| **业务** | Python + FastAPI | 推荐引擎、数据持久化 |
 
 ### 前端技术栈
 
@@ -67,10 +103,10 @@
 |------|------|
 | FastAPI | REST API 框架 |
 | Uvicorn | ASGI 服务器 |
-| PyTorch | 深度学习框架 |
-| sentence-transformers | 文本嵌入 |
-| MLX | Apple Silicon LLM 推理 |
-| aiohttp | 异步爬虫 |
+| SQLite | 数据持久化 |
+| NumPy | 向量计算 |
+| scikit-learn | TF-IDF 向量化 + Cosine 相似度 |
+| SciPy | 稀疏矩阵运算 |
 
 ---
 
@@ -95,17 +131,22 @@ npm install
 
 # 3. 设置 Python 后端
 cd backend
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
+
+# 4. 预计算推荐特征（首次运行）
+python scripts/precompute_recommendation_features.py
+
+# 5. 返回项目根目录
 cd ..
 
-# 4. 开发模式运行（推荐使用脚本）
+# 6. 开发模式运行
 ./scripts/dev.sh
 
 # 或者分开运行：
 # 终端 1 - Python 后端
-cd backend && source .venv/bin/activate && python main.py --dev
+cd backend && source venv/bin/activate && python -m backend.main --dev
 
 # 终端 2 - Tauri 应用
 npm run tauri dev
@@ -137,11 +178,7 @@ anime-filter/
 │   │   ├── navbar.tsx            # 导航栏
 │   │   ├── filter-panel.tsx      # 筛选面板
 │   │   ├── info-modal.tsx        # 详情弹窗
-│   │   ├── keyboard-guide.tsx    # 快捷键提示
 │   │   └── ui/                   # 基础 UI 组件库
-│   ├── hooks/                    # 自定义 Hooks
-│   │   ├── use-mobile.ts
-│   │   └── use-toast.ts
 │   └── lib/                      # 工具函数
 │       ├── api.ts                # Tauri API 封装
 │       └── utils.ts              # 通用工具
@@ -149,38 +186,43 @@ anime-filter/
 ├── src-tauri/                    # Rust 网关层
 │   ├── src/
 │   │   ├── main.rs               # 应用入口 + 进程管理
-│   │   ├── lib.rs                # 库入口（移动端支持）
 │   │   ├── commands.rs           # Tauri Commands（HTTP 转发）
 │   │   ├── state.rs              # AppState（端口 + HTTP Client）
-│   │   ├── sidecar.rs            # Python 进程生命周期管理
-│   │   ├── database.rs           # SQLite 操作（legacy）
-│   │   ├── csv_parser.rs         # CSV 解析（legacy）
-│   │   └── models.rs             # 数据模型
+│   │   └── sidecar.rs            # Python 进程生命周期管理
 │   ├── Cargo.toml                # Rust 依赖
 │   └── tauri.conf.json           # Tauri 配置
 │
-├── backend/                      # Python FastAPI Sidecar
+├── backend/                      # Python FastAPI Backend
 │   ├── main.py                   # 入口（动态端口 + 握手协议）
 │   ├── requirements.txt          # Python 依赖
 │   ├── core/
 │   │   ├── config.py             # 配置管理
-│   │   └── lifespan.py           # 启动/关闭钩子
+│   │   ├── lifespan.py           # 启动/关闭钩子
+│   │   ├── logging.py            # 结构化日志
+│   │   └── error_handlers.py     # 错误处理中间件
+│   ├── db/
+│   │   ├── database.py           # SQLite 操作 + 推荐系统数据
+│   │   └── recommendation_schema.sql  # 推荐系统表结构
 │   ├── routers/
 │   │   ├── health.py             # /health 健康检查
-│   │   ├── anime.py              # /api/anime/* 动漫操作
-│   │   └── ai.py                 # /api/ai/* AI 推理
+│   │   └── anime.py              # /api/anime/* 动漫操作 + 推荐
 │   └── services/
 │       ├── anime_service.py      # 动漫业务逻辑
-│       └── ai_service.py         # AI 服务
+│       └── recommendation_service.py  # 推荐引擎核心
 │
 ├── scripts/
 │   ├── dev.sh                    # 开发启动脚本
-│   └── build_python.sh           # Python 打包脚本
+│   ├── precompute_recommendation_features.py  # TF-IDF预计算
+│   └── test_recommendation_system.py  # 推荐系统测试
 │
 ├── public/
-│   └── full_data.csv             # 动漫数据源
+│   └── full_data.csv             # 动漫数据源（14,256部）
 │
-├── ARCHITECTURE.md               # 详细架构文档
+├── docs/
+│   ├── ARCHITECTURE.md           # 详细架构文档
+│   ├── RECOMMENDATION_TEST_REPORT.md  # 推荐系统测试报告
+│   └── DEVELOPMENT_STATUS.md     # 当前开发状态
+│
 ├── package.json
 ├── vite.config.ts
 ├── tailwind.config.cjs
@@ -204,21 +246,20 @@ anime-filter/
 
 ## 💾 数据存储
 
-### 存储位置
+### 开发环境存储
 
 | 数据类型 | 路径 |
 |----------|------|
-| 用户操作日志 | `~/Library/Application Support/com.zcan.anime-filter/user_actions.csv` |
-| 动漫数据源 | `public/full_data.csv` |
+| SQLite 数据库 | `.dev_data/animepick.db` |
+| 推荐特征向量 | 数据库 `anime_features` 表 |
+| Session历史 | 数据库 `user_recommendation_sessions` 表 |
 
-### CSV 日志格式
+### 生产环境存储
 
-```csv
-subject_id,status,timestamp
-290709,interested,2025-12-31T17:17:16.027Z
-27885,watched,2025-12-31T17:17:17.628Z
-30055,skipped,2025-12-31T17:17:29.066Z
-```
+| 数据类型 | 路径 |
+|----------|------|
+| SQLite 数据库 | `~/Library/Application Support/com.zcan.anime-filter/animepick.db` |
+| Legacy CSV | `~/Library/Application Support/com.zcan.anime-filter/user_actions.csv` |
 
 ---
 
@@ -229,10 +270,29 @@ subject_id,status,timestamp
 | 端点 | 方法 | 描述 |
 |------|------|------|
 | `/health` | GET | 健康检查 |
-| `/api/anime/list` | GET | 获取动漫列表 |
-| `/api/anime/mark` | POST | 标记动漫状态 |
-| `/api/anime/user-logs` | GET/POST | 用户操作日志 |
-| `/api/ai/recommend` | POST | AI 推荐 |
+| `/api/anime/list` | GET | 获取动漫列表（支持推荐排序） |
+| `/api/anime/mark` | POST | 标记动漫状态（自动追踪session） |
+| `/api/anime/batch-mark` | POST | 批量标记 |
+| `/api/anime/user-logs` | GET | 获取用户操作日志 |
+
+#### 推荐排序参数
+
+```bash
+GET /api/anime/list?sort_by=recommended&session_id=<uuid>
+
+Query参数:
+- sort_by: "recommended" (启用推荐排序)
+- session_id: 用户session ID（可选，自动生成）
+- status_filter: 状态筛选（all/watched/unwatched/interested/skipped）
+- limit: 返回数量（默认100）
+
+响应:
+{
+  "filtered_ids": [30055, 85799, ...],  // 推荐排序后的ID列表
+  "session_id": "uuid-string",
+  "count": 14251
+}
+```
 
 ### Rust 转发命令 (Tauri)
 
@@ -242,102 +302,56 @@ subject_id,status,timestamp
 | `forward_health_check` | 转发健康检查 |
 | `forward_get_anime_list` | 转发获取动漫列表 |
 | `forward_mark_anime` | 转发标记动漫 |
-| `forward_save_user_logs` | 转发保存用户日志 |
-| `forward_get_recommendations` | 转发 AI 推荐 |
 
 ---
 
-## 🔄 数据流
+## 🧪 测试
 
-```
-用户操作 (滑动/选择/标记)
-         │
-         ▼
-┌─────────────────────────┐
-│     AnimeGrid.tsx       │  处理 UI 事件，维护本地状态
-└───────────┬─────────────┘
-            │
-            ▼
-┌─────────────────────────┐
-│       App.tsx           │  管理全局状态，乐观更新 UI
-└───────────┬─────────────┘
-            │
-            ▼
-┌─────────────────────────┐
-│     src/lib/api.ts      │  封装 Tauri invoke 调用
-└───────────┬─────────────┘
-            │
-            ▼
-┌─────────────────────────┐
-│   Tauri IPC (invoke)    │
-└───────────┬─────────────┘
-            │
-            ▼
-┌─────────────────────────┐
-│   commands.rs (Rust)    │  HTTP 转发到 Python
-└───────────┬─────────────┘
-            │
-            ▼
-┌─────────────────────────┐
-│   Python FastAPI        │  业务逻辑处理
-└───────────┬─────────────┘
-            │
-            ▼
-┌─────────────────────────┐
-│   user_actions.csv      │  持久化存储
-└─────────────────────────┘
-```
-
----
-
-## 🧪 开发调试
-
-### 查看 Python 后端日志
+### 运行推荐系统测试
 
 ```bash
-# Python 后端会打印到 stderr
-# 启动握手信号打印到 stdout: SERVER_PORT:12345
+# 1. 启动后端（开发模式）
+cd backend && source venv/bin/activate
+python -m backend.main --dev
+
+# 2. 在另一个终端运行测试
+python scripts/test_recommendation_system.py
 ```
 
-### 运行后端测试
+### 测试覆盖
 
-项目包含基于 `pytest` 的后端测试套件。
+- ✅ Session创建和管理
+- ✅ 滞后响应机制验证
+- ✅ 推荐质量检查
+- ✅ 性能基准测试（66ms平均响应）
+- ✅ 降级处理（无历史时）
 
-```bash
-cd backend
-# 确保已安装测试依赖
-pip install -r requirements.txt
-
-# 运行测试
-export PYTHONPATH=$PYTHONPATH:$(pwd) && python -m pytest tests -v
-```
-
-> **注意**: 目前的测试套件在并发运行时可能会遇到 `sqlite3` 文件锁定问题（详见架构文档）。
-
-
-### 查看数据文件
-
-```bash
-# 查看用户操作日志
-cat ~/Library/Application\ Support/com.zcan.anime-filter/user_actions.csv
-
-# 实时监控
-tail -f ~/Library/Application\ Support/com.zcan.anime-filter/user_actions.csv
-
-# 按状态统计
-grep "watched" ~/Library/Application\ Support/com.zcan.anime-filter/user_actions.csv | wc -l
-```
+完整测试报告: `docs/RECOMMENDATION_TEST_REPORT.md`
 
 ---
 
 ## 📋 更新日志
 
+### v0.3.0 (2026-01-09) - 推荐系统发布
+
+**新功能**:
+- 🎯 TF-IDF向量化推荐引擎
+- 🔄 滞后响应机制（防茧房）
+- 📊 三组件融合算法（全局+局部+多样性）
+- 💾 Session持久化管理
+- ⚡ 向量化性能优化（300倍提升）
+
+**技术改进**:
+- 数据库迁移: CSV → SQLite
+- 推荐特征预计算脚本
+- 端到端测试套件
+- 结构化日志系统
+
 ### v0.2.0 (2026-01-09)
 
 - 🏗️ 架构重构：Rust 网关 + Python Sidecar
-- 🐍 新增 FastAPI 后端，支持 AI 推理
+- 🐍 新增 FastAPI 后端
 - 📦 动态端口绑定 + 进程生命周期管理
-- 🍎 Apple Silicon (MPS) 优化支持
 - 📁 优化前端目录结构
 
 ### v0.1.0 (2026-01-01)
@@ -346,10 +360,61 @@ grep "watched" ~/Library/Application\ Support/com.zcan.anime-filter/user_actions
 - ✅ 多选批量操作
 - ✅ 标签筛选系统
 - ✅ 高级筛选面板
-- ✅ 数据持久化到 CSV
-- ✅ 撤销功能
-- ✅ 视图模式切换
+- ✅ 数据持久化
 - ✅ 键盘快捷键支持
+
+---
+
+## 📖 文档
+
+- [架构文档](docs/ARCHITECTURE.md) - 详细技术架构说明
+- [推荐系统测试报告](docs/RECOMMENDATION_TEST_REPORT.md) - 性能和功能测试
+- [开发状态](docs/DEVELOPMENT_STATUS.md) - 当前开发进度
+- [前后端联调计划](frontend_integration_plan.md) - 前端集成计划
+
+---
+
+## 🛠️ 开发指南
+
+### 查看后端日志
+
+```bash
+# 后端日志打印到 stderr（结构化JSON格式）
+# 启动握手信号: SERVER_PORT:12345
+```
+
+### 预计算推荐特征
+
+```bash
+cd backend && source venv/bin/activate
+python scripts/precompute_recommendation_features.py
+
+# 输出:
+# ✓ Loaded 14,256 anime
+# ✓ TF-IDF matrix shape: (14256, 1000)
+# ✓ Vocabulary size: 1000
+# ✓ Saved 14,256 anime features
+```
+
+### 查看数据库
+
+```bash
+# SQLite CLI
+sqlite3 .dev_data/animepick.db
+
+# 查看推荐特征
+SELECT subject_id, json_extract(tfidf_vector, '$.indices')
+FROM anime_features LIMIT 5;
+
+# 查看Session历史
+SELECT * FROM user_recommendation_sessions;
+```
+
+---
+
+## 🤝 贡献
+
+欢迎提交 Issue 和 Pull Request！
 
 ---
 

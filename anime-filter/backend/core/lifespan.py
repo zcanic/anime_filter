@@ -17,6 +17,7 @@ async def startup_handler(app: FastAPI) -> None:
     - Initialize database
     - Load status cache into memory
     - Migrate legacy CSV if exists
+    - Initialize recommendation engine
     """
     print(f"[Startup] {settings.app_name}", file=sys.stderr)
     print(f"[Startup] Data dir: {settings.app_data_dir}", file=sys.stderr)
@@ -40,6 +41,22 @@ async def startup_handler(app: FastAPI) -> None:
     # Load all statuses into memory (if not already loaded)
     if not db._cache_loaded:
         db.load_cache()
+
+    # Initialize recommendation engine
+    print(f"[Startup] Initializing recommendation engine...", file=sys.stderr)
+    from backend.services.recommendation_service import RecommendationEngine, recommendation_engine
+
+    # Create global instance
+    import backend.services.recommendation_service as rec_module
+    rec_module.recommendation_engine = RecommendationEngine(db)
+
+    # Load features to memory
+    rec_module.recommendation_engine.load_features_to_memory()
+
+    # Store in app state
+    app.state.recommendation_engine = rec_module.recommendation_engine
+
+    print(f"[Startup] Recommendation engine ready!", file=sys.stderr)
 
     app.state.settings = settings
 

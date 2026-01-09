@@ -5,7 +5,7 @@ All business logic delegated to AnimeService.
 
 from typing import Optional, Literal
 from datetime import datetime
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
 from backend.services.anime_service import AnimeService
@@ -75,6 +75,7 @@ class BatchMarkRequest(BaseModel):
 
 @router.get("/list")
 async def get_anime_list(
+    request: Request,
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     tags: list[str] = Query(default=[], max_length=10),
@@ -82,12 +83,15 @@ async def get_anime_list(
     year_start: Optional[int] = Query(None, ge=1900, le=2100),
     year_end: Optional[int] = Query(None, ge=1900, le=2100),
     status_filter: Optional[Literal["watched", "interested", "skipped", "all"]] = None,
+    sort_by: str = Query("default", description="Sort: recommended, score, year, default"),
+    session_id: Optional[str] = Query(None, description="Session ID for recommendations"),
 ):
     """
-    Get filtered anime list.
+    Get filtered anime list with optional AI recommendations.
 
-    Note: For now, anime data is loaded from CSV on the frontend.
-    This endpoint is a placeholder for future server-side filtering.
+    New parameters:
+        sort_by: Sorting method (recommended, score, year, default)
+        session_id: Session ID for personalized recommendations
     """
     # Validate year range
     if year_start and year_end and year_end < year_start:
@@ -101,32 +105,79 @@ async def get_anime_list(
     # Get reviewed IDs for filtering
     reviewed_ids = service.get_reviewed_ids()
 
-    # If status filter is specified, get those IDs
+    # Determine which IDs to return based on filter
     if status_filter and status_filter != "all":
+        # Specific status filter
         filtered_ids = service.get_ids_by_status(status_filter)
+    elif sort_by == "recommended":
+        # For recommendations without status filter, get all unwatched anime
+        # (exclude anime marked as watched)
+        watched_ids = service.get_ids_by_status("watched")
+        # Get all anime IDs from feature cache
+        if hasattr(request.app.state, 'recommendation_engine'):
+            rec_engine = request.app.state.recommendation_engine
+            all_anime_ids = list(rec_engine._feature_cache.keys())
+            filtered_ids = [aid for aid in all_anime_ids if aid not in watched_ids]
+        else:
+            filtered_ids = []
+    else:
+        # No filter, no recommendations - return empty
         return {
-            "data": [],  # Frontend handles actual anime data
-            "filtered_ids": filtered_ids,
+            "data": [],
             "reviewed_ids": list(reviewed_ids),
-            "count": len(filtered_ids),
+            "count": 0,
         }
+
+    # Apply recommendation sorting if requested
+    session_id_to_return = None
+    if sort_by == "recommended" and hasattr(request.app.state, 'recommendation_engine'):
+        rec_engine = request.app.state.recommendation_engine
+        session = rec_engine.get_or_create_session(session_id)
+        history_ids = rec_engine.get_session_snapshot(session.session_id)
+        session_id_to_return = session.session_id
+
+        # Debug logging
+        import sys
+        print(f"[DEBUG] Session {session.session_id}: history_ids={history_ids}, len={len(history_ids)}", file=sys.stderr)
+
+        if history_ids:
+            # Rank filtered IDs based on recommendation scores
+            ranked_ids = rec_engine.rank_anime_list(filtered_ids, history_ids)
+            filtered_ids = ranked_ids
+            print(f"[DEBUG] Applied ranking, result count={len(filtered_ids)}", file=sys.stderr)
+        else:
+            # No effective history due to lag - return empty results
+            # User needs to watch more anime before recommendations can be generated
+            filtered_ids = []
+            print(f"[DEBUG] No effective history due to lag, returning empty list", file=sys.stderr)
 
     return {
         "data": [],  # Frontend handles actual anime data
+        "filtered_ids": filtered_ids,
         "reviewed_ids": list(reviewed_ids),
-        "count": 0,
+        "count": len(filtered_ids),
+        "session_id": session_id_to_return,
     }
 
 
 @router.post("/mark")
-async def mark_anime(request: MarkRequest):
+async def mark_anime(request: Request, mark_request: MarkRequest):
     """Mark a single anime with status."""
     service = AnimeService()
     await service.mark_anime(
-        subject_id=request.subject_id,
-        status=request.status,
-        rating=request.rating,
+        subject_id=mark_request.subject_id,
+        status=mark_request.status,
+        rating=mark_request.rating,
     )
+
+    # Update recommendation session if watched
+    if mark_request.status == "watched" and hasattr(request.app.state, 'recommendation_engine'):
+        rec_engine = request.app.state.recommendation_engine
+        # Get session ID from header or create new
+        session_id = request.headers.get('X-Session-ID')
+        if session_id:
+            rec_engine.add_watched_to_session(session_id, mark_request.subject_id)
+
     return {"success": True}
 
 

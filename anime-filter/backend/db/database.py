@@ -18,6 +18,7 @@ from typing import Optional, Dict, Any
 from contextlib import contextmanager
 
 from backend.core.config import settings
+import json
 
 
 class LRUCache:
@@ -434,6 +435,204 @@ class Database:
     def get_cache_stats(self) -> dict:
         """Get cache statistics for monitoring."""
         return self._status_cache.stats()
+
+    # =========================================================================
+    # Recommendation System Methods
+    # =========================================================================
+
+    def init_recommendation_tables(self):
+        """Initialize recommendation system tables."""
+        schema_path = Path(__file__).parent / "recommendation_schema.sql"
+
+        with self._get_connection() as conn:
+            with open(schema_path, 'r', encoding='utf-8') as f:
+                schema_sql = f.read()
+                conn.executescript(schema_sql)
+            conn.commit()
+
+    def save_anime_features(self, subject_id: int, tfidf_vector: str,
+                           avg_score: float = 0.0, year: int = 0,
+                           popularity: float = 0.0, completion_rate: float = 0.0,
+                           raw_tags: str = ""):
+        """Save anime feature vector to database."""
+        with self._get_connection() as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO anime_features
+                (subject_id, tfidf_vector, avg_score, year, popularity, completion_rate, raw_tags, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """, (subject_id, tfidf_vector, avg_score, year, popularity, completion_rate, raw_tags))
+            conn.commit()
+
+    def save_features_batch(self, features_batch: list[dict]):
+        """Batch save anime features."""
+        with self._get_connection() as conn:
+            conn.executemany("""
+                INSERT OR REPLACE INTO anime_features
+                (subject_id, tfidf_vector, avg_score, year, popularity, completion_rate, raw_tags, updated_at)
+                VALUES (:subject_id, :tfidf_vector, :avg_score, :year, :popularity, :completion_rate, :raw_tags, CURRENT_TIMESTAMP)
+            """, features_batch)
+            conn.commit()
+
+    def get_anime_features(self, subject_id: int) -> Optional[dict]:
+        """Get anime feature vector from database."""
+        with self._get_connection() as conn:
+            cursor = conn.execute("""
+                SELECT subject_id, tfidf_vector, avg_score, year, popularity, completion_rate, raw_tags
+                FROM anime_features WHERE subject_id = ?
+            """, (subject_id,))
+            row = cursor.fetchone()
+
+            if row:
+                return {
+                    "subject_id": row[0],
+                    "tfidf_vector": json.loads(row[1]),
+                    "avg_score": row[2],
+                    "year": row[3],
+                    "popularity": row[4],
+                    "completion_rate": row[5],
+                    "raw_tags": row[6]
+                }
+            return None
+
+    def get_all_anime_features(self) -> list[dict]:
+        """Get all anime features (for loading into memory)."""
+        with self._get_connection() as conn:
+            cursor = conn.execute("""
+                SELECT subject_id, tfidf_vector, avg_score, year, popularity, completion_rate
+                FROM anime_features
+            """)
+
+            results = []
+            for row in cursor:
+                results.append({
+                    "subject_id": row[0],
+                    "tfidf_vector": json.loads(row[1]),
+                    "avg_score": row[2],
+                    "year": row[3],
+                    "popularity": row[4],
+                    "completion_rate": row[5]
+                })
+            return results
+
+    def save_vocabulary(self, vocabulary: list[dict]):
+        """Save TF-IDF vocabulary to database."""
+        with self._get_connection() as conn:
+            conn.executemany("""
+                INSERT OR REPLACE INTO tfidf_vocabulary
+                (tag_name, idf_value, document_frequency, tag_category, category_weight)
+                VALUES (:tag_name, :idf_value, :document_frequency, :tag_category, :category_weight)
+            """, vocabulary)
+            conn.commit()
+
+    def get_vocabulary(self) -> dict:
+        """Get TF-IDF vocabulary mapping."""
+        with self._get_connection() as conn:
+            cursor = conn.execute("""
+                SELECT tag_id, tag_name, idf_value, tag_category, category_weight
+                FROM tfidf_vocabulary
+                ORDER BY tag_id
+            """)
+
+            vocab = {}
+            for row in cursor:
+                vocab[row[1]] = {  # tag_name as key
+                    "tag_id": row[0],
+                    "tag_name": row[1],
+                    "idf_value": row[2],
+                    "category": row[3],
+                    "weight": row[4]
+                }
+            return vocab
+
+    def create_session(self, session_id: str, config_version: str = "balanced") -> str:
+        """Create a new recommendation session."""
+        with self._get_connection() as conn:
+            conn.execute("""
+                INSERT INTO user_recommendation_sessions
+                (session_id, config_version, started_at, last_activity)
+                VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """, (session_id, config_version))
+            conn.commit()
+            return session_id
+
+    def get_session(self, session_id: str) -> Optional[dict]:
+        """Get session info."""
+        with self._get_connection() as conn:
+            cursor = conn.execute("""
+                SELECT session_id, started_at, last_activity, lag_steps, window_size, temperature, config_version
+                FROM user_recommendation_sessions
+                WHERE session_id = ? AND is_active = 1
+            """, (session_id,))
+            row = cursor.fetchone()
+
+            if row:
+                return {
+                    "session_id": row[0],
+                    "started_at": row[1],
+                    "last_activity": row[2],
+                    "lag_steps": row[3],
+                    "window_size": row[4],
+                    "temperature": row[5],
+                    "config_version": row[6]
+                }
+            return None
+
+    def update_session_activity(self, session_id: str):
+        """Update session last activity timestamp."""
+        with self._get_connection() as conn:
+            conn.execute("""
+                UPDATE user_recommendation_sessions
+                SET last_activity = CURRENT_TIMESTAMP
+                WHERE session_id = ?
+            """, (session_id,))
+            conn.commit()
+
+    def add_session_action(self, session_id: str, subject_id: int,
+                          action_type: str, sequence_order: int):
+        """Add action to session history."""
+        with self._get_connection() as conn:
+            conn.execute("""
+                INSERT INTO user_session_actions
+                (session_id, subject_id, action_type, sequence_order, timestamp)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """, (session_id, subject_id, action_type, sequence_order))
+            conn.commit()
+
+    def get_session_actions(self, session_id: str, limit: Optional[int] = None) -> list[dict]:
+        """Get session action history."""
+        with self._get_connection() as conn:
+            query = """
+                SELECT subject_id, action_type, sequence_order, timestamp
+                FROM user_session_actions
+                WHERE session_id = ?
+                ORDER BY sequence_order ASC
+            """
+            if limit:
+                query += f" LIMIT {limit}"
+
+            cursor = conn.execute(query, (session_id,))
+
+            actions = []
+            for row in cursor:
+                actions.append({
+                    "subject_id": row[0],
+                    "action_type": row[1],
+                    "sequence_order": row[2],
+                    "timestamp": row[3]
+                })
+            return actions
+
+    def log_recommendation_metric(self, session_id: str, page_number: int,
+                                  computation_time_ms: float, candidate_count: int,
+                                  history_count: int):
+        """Log recommendation performance metrics."""
+        with self._get_connection() as conn:
+            conn.execute("""
+                INSERT INTO recommendation_metrics
+                (session_id, page_number, computation_time_ms, candidate_count, history_count)
+                VALUES (?, ?, ?, ?, ?)
+            """, (session_id, page_number, computation_time_ms, candidate_count, history_count))
+            conn.commit()
 
 
 # Singleton instance
