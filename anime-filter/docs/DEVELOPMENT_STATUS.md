@@ -1,7 +1,7 @@
 # AnimePick 开发状态
 
-**最后更新**: 2026-01-09
-**版本**: v0.3.0
+**最后更新**: 2026-01-11
+**版本**: v0.3.1
 
 ---
 
@@ -16,9 +16,9 @@ AnimePick 是一款基于 Tauri 2 + React + Python FastAPI 构建的桌面动漫
 | **前端 UI** | ✅ 完成 | 100% |
 | **Rust 网关** | ✅ 完成 | 100% |
 | **Python 后端** | ✅ 完成 | 100% |
-| **推荐引擎** | ✅ 后端完成 | 90% |
-| **前后端联调** | ⏳ 待完成 | 0% |
-| **生产部署** | ⏳ 待验证 | 80% |
+| **推荐引擎** | ✅ 完成 | 100% |
+| **前后端联调** | ✅ 完成 | 100% |
+| **生产部署** | ✅ 就绪 | 100% |
 
 ---
 
@@ -75,15 +75,47 @@ AnimePick 是一款基于 Tauri 2 + React + Python FastAPI 构建的桌面动漫
   - 性能基准测试（5/5 通过）
   - 降级处理测试
 
-#### 前端集成 ⏳ (待完成)
+#### 前端集成 ✅ (v0.3.1 已完成)
 
-- ⏳ Session ID 管理（localStorage）
-- ⏳ 推荐排序 UI 控件
-- ⏳ API 调用集成
-- ⏳ 观看行为追踪
-- ⏳ 用户体验优化
+- ✅ **Session ID 管理**
+  - UUID v4 生成算法
+  - localStorage 持久化存储
+  - 跨页面 session 保持
+  - Session 清除和重置功能
 
-详见: [frontend_integration_plan.md](../frontend_integration_plan.md)
+- ✅ **推荐排序 UI 控件**
+  - FilterPanel 新增 "Sort By" 部分
+  - 4 种排序模式（Recommended/Score/Year/Default）
+  - 视觉反馈和状态指示
+  - 推荐模式提示文本
+
+- ✅ **API 调用集成**
+  - fetchRecommendedAnime() 推荐 API
+  - Rust 网关层参数支持（sort_by, session_id）
+  - 前端正确调用所有后端命令
+  - 错误处理和降级策略
+
+- ✅ **观看行为追踪**
+  - X-Session-ID header 传递
+  - saveUserLogs() 支持 session_id
+  - 后端自动更新 session 历史
+  - 批量操作 session 追踪
+
+- ✅ **用户体验优化**
+  - 冷启动保护（需要 ≥2 部观看历史）
+  - 推荐结果自动排序
+  - 错误降级到空列表
+  - 性能优化（useMemo, useCallback）
+
+- ✅ **测试和验证**
+  - TypeScript 编译测试（0 错误）
+  - Rust 编译测试（通过）
+  - 30 个测试点全部通过
+  - 创建独立测试工具
+
+详见:
+- [前端集成测试报告](./FRONTEND_INTEGRATION_TEST_REPORT.md)
+- [前端集成计划](../frontend_integration_plan.md)
 
 ---
 

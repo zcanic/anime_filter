@@ -18,7 +18,7 @@
 
 import { useState } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { X, Star, Calendar, Tag, Eye, EyeOff, Heart, ThumbsDown } from "lucide-react"
+import { X, Star, Calendar, Tag, Eye, EyeOff, Heart, ThumbsDown, Sparkles, TrendingUp } from "lucide-react"
 
 /**
  * Filter configuration type
@@ -26,12 +26,14 @@ import { X, Star, Calendar, Tag, Eye, EyeOff, Heart, ThumbsDown } from "lucide-r
  * @property {number|null} yearStart - Start year for filtering
  * @property {number|null} yearEnd - End year for filtering
  * @property {string} watchStatus - Watch status filter
+ * @property {string} sortBy - Sort method (recommended/score/year)
  */
 export interface FilterConfig {
   minRating: number
   yearStart: number | null
   yearEnd: number | null
   watchStatus: "all" | "watched" | "unwatched" | "interested" | "skipped"
+  sortBy: "recommended" | "score" | "year" | "default"
 }
 
 interface FilterPanelProps {
@@ -204,6 +206,77 @@ export function FilterPanel({
                 )}
               </section>
 
+              {/* Sort By Section */}
+              <section className="space-y-3">
+                <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                  <Sparkles className="h-4 w-4 text-yellow-500" />
+                  <span>Sort By</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => updateFilter("sortBy", "recommended")}
+                    className={`
+                      px-4 py-3 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2
+                      ${
+                        filters.sortBy === "recommended"
+                          ? "bg-primary text-primary-foreground shadow-sm"
+                          : "bg-muted/50 text-muted-foreground hover:bg-muted"
+                      }
+                    `}
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    Recommended
+                  </button>
+                  <button
+                    onClick={() => updateFilter("sortBy", "score")}
+                    className={`
+                      px-4 py-3 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2
+                      ${
+                        filters.sortBy === "score"
+                          ? "bg-primary text-primary-foreground shadow-sm"
+                          : "bg-muted/50 text-muted-foreground hover:bg-muted"
+                      }
+                    `}
+                  >
+                    <Star className="h-3.5 w-3.5" />
+                    Score
+                  </button>
+                  <button
+                    onClick={() => updateFilter("sortBy", "year")}
+                    className={`
+                      px-4 py-3 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2
+                      ${
+                        filters.sortBy === "year"
+                          ? "bg-primary text-primary-foreground shadow-sm"
+                          : "bg-muted/50 text-muted-foreground hover:bg-muted"
+                      }
+                    `}
+                  >
+                    <Calendar className="h-3.5 w-3.5" />
+                    Year
+                  </button>
+                  <button
+                    onClick={() => updateFilter("sortBy", "default")}
+                    className={`
+                      px-4 py-3 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2
+                      ${
+                        filters.sortBy === "default"
+                          ? "bg-primary text-primary-foreground shadow-sm"
+                          : "bg-muted/50 text-muted-foreground hover:bg-muted"
+                      }
+                    `}
+                  >
+                    <TrendingUp className="h-3.5 w-3.5" />
+                    Default
+                  </button>
+                </div>
+                {filters.sortBy === "recommended" && (
+                  <p className="text-xs text-muted-foreground">
+                    💡 Personalized recommendations based on your watch history
+                  </p>
+                )}
+              </section>
+
               {/* Watch Status Filter Section */}
               <section className="space-y-3">
                 <div className="flex items-center gap-2 text-sm font-medium text-foreground">
@@ -291,6 +364,7 @@ export function FilterPanel({
                     yearStart: null,
                     yearEnd: null,
                     watchStatus: "all",
+                    sortBy: "default",
                   })
                 }}
                 className="w-full py-3 rounded-xl border border-border text-sm text-muted-foreground hover:bg-muted/50 transition-colors"

@@ -63,6 +63,8 @@ pub async fn forward_get_anime_list(
     year_start: Option<i32>,
     year_end: Option<i32>,
     status_filter: Option<String>,
+    sort_by: Option<String>,
+    session_id: Option<String>,
 ) -> Result<serde_json::Value, String> {
     state.ensure_ready()?;
 
@@ -88,6 +90,12 @@ pub async fn forward_get_anime_list(
     if let Some(s) = status_filter {
         params.push(format!("status_filter={}", s));
     }
+    if let Some(sort) = sort_by {
+        params.push(format!("sort_by={}", sort));
+    }
+    if let Some(sid) = session_id {
+        params.push(format!("session_id={}", sid));
+    }
 
     let url = format!("/api/anime/list?{}", params.join("&"));
     state.get_json(&url).await
@@ -100,6 +108,7 @@ pub async fn forward_mark_anime(
     subject_id: i64,
     status: String,
     rating: Option<i32>,
+    session_id: Option<String>,
 ) -> Result<serde_json::Value, String> {
     state.ensure_ready()?;
 
@@ -109,7 +118,12 @@ pub async fn forward_mark_anime(
         "rating": rating,
     });
 
-    state.post_json("/api/anime/mark", &body).await
+    // If session_id is provided, add it as X-Session-ID header
+    if let Some(sid) = session_id {
+        state.post_json_with_header("/api/anime/mark", &body, "X-Session-ID", &sid).await
+    } else {
+        state.post_json("/api/anime/mark", &body).await
+    }
 }
 
 /// Save user action logs
@@ -117,9 +131,16 @@ pub async fn forward_mark_anime(
 pub async fn forward_save_user_logs(
     state: State<'_, Arc<AppState>>,
     actions: Vec<UserAction>,
+    session_id: Option<String>,
 ) -> Result<serde_json::Value, String> {
     state.ensure_ready()?;
-    state.post_json("/api/anime/user-logs", &actions).await
+
+    // If session_id is provided, add it as X-Session-ID header
+    if let Some(sid) = session_id {
+        state.post_json_with_header("/api/anime/user-logs", &actions, "X-Session-ID", &sid).await
+    } else {
+        state.post_json("/api/anime/user-logs", &actions).await
+    }
 }
 
 /// Load all user logs

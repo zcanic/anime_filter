@@ -209,11 +209,22 @@ async def get_all_user_logs():
 
 
 @router.post("/user-logs")
-async def save_user_logs(actions: list[UserAction]):
+async def save_user_logs(request: Request, actions: list[UserAction]):
     """Save user action logs."""
     service = AnimeService()
     actions_dict = [a.model_dump() for a in actions]
     await service.save_user_logs(actions_dict)
+
+    # Update recommendation session for watched anime
+    if hasattr(request.app.state, 'recommendation_engine'):
+        rec_engine = request.app.state.recommendation_engine
+        session_id = request.headers.get('X-Session-ID')
+        if session_id:
+            # Add all watched actions to session
+            for action in actions:
+                if action.status == "watched":
+                    rec_engine.add_watched_to_session(session_id, action.subject_id)
+
     return {"success": True, "count": len(actions)}
 
 

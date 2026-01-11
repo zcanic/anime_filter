@@ -104,6 +104,28 @@ impl AppState {
         self.parse_response(response).await
     }
 
+    /// POST request with JSON body and custom header
+    pub async fn post_json_with_header<T: serde::Serialize>(
+        &self,
+        path: &str,
+        body: &T,
+        header_name: &str,
+        header_value: &str,
+    ) -> Result<serde_json::Value, String> {
+        let url = format!("{}{}", self.backend_url(), path);
+
+        let response = self
+            .http_client
+            .post(&url)
+            .header(header_name, header_value)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| format!("HTTP POST failed: {}", e))?;
+
+        self.parse_response(response).await
+    }
+
     /// DELETE request
     pub async fn delete_json(&self, path: &str) -> Result<serde_json::Value, String> {
         let url = format!("{}{}", self.backend_url(), path);

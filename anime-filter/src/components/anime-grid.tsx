@@ -7,6 +7,8 @@ import { Navbar } from "./navbar"
 import { KeyboardGuide } from "./keyboard-guide"
 import { FilterPanel, type FilterConfig } from "./filter-panel"
 import { SkipForward, Check, Undo2, Trash2 } from "lucide-react"
+import { getOrCreateSessionId } from "../lib/session"
+import { fetchRecommendedAnime } from "../lib/api"
 
 // ============================================================================
 // TYPE DEFINITIONS
@@ -98,9 +100,16 @@ export function AnimeGrid({
     yearStart: null,
     yearEnd: null,
     watchStatus: "all",
+    sortBy: "default",
   })
-  
+
   const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false)
+
+  // Session ID for recommendation system
+  const sessionId = useRef<string>(getOrCreateSessionId())
+
+  // Recommended anime IDs (from backend)
+  const [recommendedIds, setRecommendedIds] = useState<number[]>([])
 
   // Ref to track IDs assigned in pending state updates to prevent duplicates in rapid succession
   const recentlyAssignedIds = useRef<Set<number>>(new Set())
@@ -161,10 +170,16 @@ export function AnimeGrid({
         .map((id) => data.find((a) => a.id === id))
         .filter((anime): anime is AnimeData => anime !== undefined)
     }
+    // For recommended sorting, use the recommended IDs from backend
+    if (filters.sortBy === "recommended" && recommendedIds.length > 0) {
+      return recommendedIds
+        .map((id) => data.find((a) => a.id === id))
+        .filter((anime): anime is AnimeData => anime !== undefined)
+    }
     return gridPositions
       .map((id) => data.find((a) => a.id === id))
       .filter((anime): anime is AnimeData => anime !== undefined)
-  }, [gridPositions, data, viewMode, watchedIds, interestedIds, skippedIds, filters.watchStatus])
+  }, [gridPositions, data, viewMode, watchedIds, interestedIds, skippedIds, filters.watchStatus, filters.sortBy, recommendedIds])
 
   const doesAnimeMatchFilters = useCallback(
     (anime: AnimeData) => {
@@ -228,6 +243,27 @@ export function AnimeGrid({
   // --------------------------------------------------------------------------
   // EFFECTS
   // --------------------------------------------------------------------------
+
+  // Fetch recommended anime IDs when sort mode is "recommended"
+  useEffect(() => {
+    // Only fetch recommendations if:
+    // 1. Sort mode is "recommended"
+    // 2. User has watched at least 2 anime (cold start prevention)
+    if (filters.sortBy !== "recommended" || watchedIds.length < 2) {
+      setRecommendedIds([])
+      return
+    }
+
+    // Fetch recommendations from backend
+    fetchRecommendedAnime(sessionId.current, filters.watchStatus)
+      .then((result) => {
+        setRecommendedIds(result.filtered_ids)
+      })
+      .catch((error) => {
+        console.error("Failed to fetch recommendations:", error)
+        setRecommendedIds([])
+      })
+  }, [filters.sortBy, filters.watchStatus, watchedIds.length])
 
   // Replenish grid when filters change
   useEffect(() => {
@@ -524,6 +560,7 @@ export function AnimeGrid({
                     yearStart: null,
                     yearEnd: null,
                     watchStatus: "all",
+                    sortBy: "default",
                   })
                 }}
                 className="mt-4 px-4 py-2 rounded-xl bg-muted text-sm text-foreground hover:bg-muted/80 transition-colors"

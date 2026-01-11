@@ -1,13 +1,17 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { AnimeGrid, AnimeData } from "./components/anime-grid";
 import Papa from "papaparse";
 import { loadUserLogs, saveUserLogs, deleteUserLog, clearAllUserLogs, SimpleUserAction } from "./lib/api";
+import { getOrCreateSessionId } from "./lib/session";
 
 function App() {
   const [data, setData] = useState<AnimeData[]>([]);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
-  
+
+  // Session ID for recommendation system
+  const sessionId = useRef<string>(getOrCreateSessionId());
+
   // Full log history - Single Source of Truth
   const [userLogs, setUserLogs] = useState<SimpleUserAction[]>([]);
 
@@ -116,8 +120,8 @@ function App() {
     // 1. Optimistic Update - Functional Update to prevent race conditions
     setUserLogs(prev => [...prev, ...newActions]);
 
-    // 2. Save to Backend
-    saveUserLogs(newActions);
+    // 2. Save to Backend with session ID for tracking
+    saveUserLogs(newActions, sessionId.current);
   };
 
   if (loading || data.length === 0) {

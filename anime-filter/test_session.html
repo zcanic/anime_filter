@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Session Management Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .test-section h3 {
+            margin-top: 0;
+        }
+        .result {
+            background: #f5f5f5;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+        .success {
+            color: green;
+        }
+        .error {
+            color: red;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 AnimePick Session Management Test</h1>
+
+    <div class="test-section">
+        <h3>1. Session ID Generation & Storage</h3>
+        <button onclick="testSessionGeneration()">Test Session Generation</button>
+        <div id="session-result" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>2. Session Persistence</h3>
+        <button onclick="testSessionPersistence()">Test Persistence</button>
+        <div id="persistence-result" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>3. Session Clear</h3>
+        <button onclick="testSessionClear()">Test Clear</button>
+        <div id="clear-result" class="result"></div>
+    </div>
+
+    <script>
+        // Simple UUID v4 generator
+        function generateUUID() {
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+                const r = Math.random() * 16 | 0;
+                const v = c === 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        }
+
+        const SESSION_STORAGE_KEY = 'animepick_session_id';
+
+        function getOrCreateSessionId() {
+            let sessionId = localStorage.getItem(SESSION_STORAGE_KEY);
+            if (!sessionId) {
+                sessionId = generateUUID();
+                localStorage.setItem(SESSION_STORAGE_KEY, sessionId);
+            }
+            return sessionId;
+        }
+
+        function clearSessionId() {
+            localStorage.removeItem(SESSION_STORAGE_KEY);
+        }
+
+        function getSessionId() {
+            return localStorage.getItem(SESSION_STORAGE_KEY);
+        }
+
+        // Tests
+        function testSessionGeneration() {
+            const resultDiv = document.getElementById('session-result');
+            try {
+                // Clear first
+                clearSessionId();
+
+                // Generate new session
+                const sessionId = getOrCreateSessionId();
+
+                // Validate UUID format
+                const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+                const isValidUUID = uuidRegex.test(sessionId);
+
+                // Check if stored
+                const storedId = localStorage.getItem(SESSION_STORAGE_KEY);
+
+                resultDiv.innerHTML = `
+                    <span class="${isValidUUID ? 'success' : 'error'}">
+                        ✓ Session ID Generated: ${sessionId}
+                    </span><br>
+                    <span class="${isValidUUID ? 'success' : 'error'}">
+                        ✓ Valid UUID v4 Format: ${isValidUUID}
+                    </span><br>
+                    <span class="${storedId === sessionId ? 'success' : 'error'}">
+                        ✓ Stored in localStorage: ${storedId === sessionId}
+                    </span>
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = `<span class="error">✗ Error: ${error.message}</span>`;
+            }
+        }
+
+        function testSessionPersistence() {
+            const resultDiv = document.getElementById('persistence-result');
+            try {
+                // Get or create first session
+                const session1 = getOrCreateSessionId();
+
+                // Call again - should return same ID
+                const session2 = getOrCreateSessionId();
+
+                // Check persistence
+                const isPersistent = session1 === session2;
+
+                resultDiv.innerHTML = `
+                    <span class="${isPersistent ? 'success' : 'error'}">
+                        First call: ${session1}
+                    </span><br>
+                    <span class="${isPersistent ? 'success' : 'error'}">
+                        Second call: ${session2}
+                    </span><br>
+                    <span class="${isPersistent ? 'success' : 'error'}">
+                        ✓ Session Persists: ${isPersistent}
+                    </span><br>
+                    <small>Note: Reload page to fully test persistence across sessions</small>
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = `<span class="error">✗ Error: ${error.message}</span>`;
+            }
+        }
+
+        function testSessionClear() {
+            const resultDiv = document.getElementById('clear-result');
+            try {
+                // Create session
+                const beforeClear = getOrCreateSessionId();
+
+                // Clear it
+                clearSessionId();
+
+                // Check if cleared
+                const afterClear = getSessionId();
+                const isCleared = afterClear === null;
+
+                // Create new one
+                const newSession = getOrCreateSessionId();
+                const isDifferent = newSession !== beforeClear;
+
+                resultDiv.innerHTML = `
+                    <span class="success">
+                        Original Session: ${beforeClear}
+                    </span><br>
+                    <span class="${isCleared ? 'success' : 'error'}">
+                        ✓ After Clear: ${afterClear || 'null'} (Expected: null)
+                    </span><br>
+                    <span class="${isDifferent ? 'success' : 'error'}">
+                        New Session: ${newSession}
+                    </span><br>
+                    <span class="${isDifferent ? 'success' : 'error'}">
+                        ✓ New Session Different: ${isDifferent}
+                    </span>
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = `<span class="error">✗ Error: ${error.message}</span>`;
+            }
+        }
+
+        // Auto-run first test on load
+        window.addEventListener('load', () => {
+            console.log('Session Management Test Page Loaded');
+        });
+    </script>
+</body>
+</html>
